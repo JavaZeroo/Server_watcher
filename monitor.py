@@ -4,78 +4,7 @@ import time
 from datetime import datetime
 import multiprocessing
 import os
-
-class Metric:
-    def __init__(self, name, sub_metrics):
-        self.name = name
-        self.sub_metrics = sub_metrics
-
-    def get_value(self, monitor):
-        raise NotImplementedError("Subclasses must implement get_value method")
-
-    def get_sub_metrics(self):
-        return self.sub_metrics
-
-class CpuMetric(Metric):
-    def __init__(self):
-        sub_metrics = [("usage", "CPU使用率")]
-        super().__init__("cpu", sub_metrics)
-
-    def get_value(self, monitor):
-        result = monitor.execute_command("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'")
-        if result:
-            try:
-                return {"usage": float(result.strip())}
-            except:
-                return None
-        return None
-
-class MemoryMetric(Metric):
-    def __init__(self):
-        sub_metrics = [
-            ("percentage", "内存使用率"),
-            ("used", "已用内存"),
-            ("total", "总内存")
-        ]
-        super().__init__("memory", sub_metrics)
-
-    def get_value(self, monitor):
-        total_cmd = "free -m | grep 'Mem:' | awk '{print $2}'"
-        used_cmd = "free -m | grep 'Mem:' | awk '{print $3}'"
-        
-        total_mem = monitor.execute_command(total_cmd)
-        used_mem = monitor.execute_command(used_cmd)
-        
-        if total_mem and used_mem:
-            try:
-                total = float(total_mem.strip())
-                used = float(used_mem.strip())
-                percentage = (used / total) * 100
-                return {
-                    "percentage": percentage,
-                    "used": used,
-                    "total": total
-                }
-            except:
-                return None
-        return None
-
-class DiskMetric(Metric):
-    def __init__(self):
-        sub_metrics = [("usage", "磁盘使用率")]
-        super().__init__("disk", sub_metrics)
-
-    def get_value(self, monitor):
-        disk_cmd = "df -h / | grep -v Filesystem | awk '{print $5}'"
-        disk_usage = monitor.execute_command(disk_cmd)
-        
-        if disk_usage:
-            try:
-                percentage = float(disk_usage.strip().replace('%', ''))
-                return {"usage": percentage}
-            except:
-                return None
-        return None
+from watcher_register import WatcherRegister, WatcherModuleType
 
 class ServerMonitor:
     def __init__(self, server_id, hostname, username, password=None, key_filename=None, port=22):
@@ -166,11 +95,16 @@ def monitor_server(server_config, interval, data_queue):
         key_filename=server_config.get('key_filename'),
         port=server_config.get('port', 22)
     )
-    
-    monitor.register_metric(CpuMetric())
-    monitor.register_metric(MemoryMetric())
-    monitor.register_metric(DiskMetric())
-    
+
+    # Dynamically register metrics based on configuration
+    for metric_config in server_config.get('metrics', []):
+        metric_type = metric_config.get('type')
+        metric_class = WatcherRegister.get_registered(WatcherModuleType.METRIC, metric_type)
+        if metric_class:
+            monitor.register_metric(metric_class())
+        else:
+            print(f"未找到指定的监控指标类型: {metric_type}")
+
     if not monitor.connect():
         data_queue.put({"server_id": server_id, "status": "error", "message": "连接失败"})
         return

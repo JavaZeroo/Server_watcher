@@ -9,8 +9,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import yaml
 import os
-from monitor import ServerMonitor, monitor_server, CpuMetric, MemoryMetric, DiskMetric
+from monitor import ServerMonitor, monitor_server
+from watcher_register import WatcherRegister, WatcherModuleType
 
+import metrics
 class ServerManager:
     def __init__(self):
         self.servers = {}
@@ -61,6 +63,7 @@ class ServerManager:
             process.daemon = True
             process.start()
             self.processes[server_id] = process
+
             monitor = ServerMonitor(
                 server_id=server_id,
                 hostname=server_config['hostname'],
@@ -69,9 +72,16 @@ class ServerManager:
                 key_filename=server_config.get('key_filename'),
                 port=server_config.get('port', 22)
             )
-            monitor.register_metric(CpuMetric())
-            monitor.register_metric(MemoryMetric())
-            monitor.register_metric(DiskMetric())
+
+            # Dynamically register metrics based on configuration
+            for metric_config in server_config.get('metrics', []):
+                metric_type = metric_config.get('type')
+                metric_class = WatcherRegister.get_registered(WatcherModuleType.METRIC, metric_type)
+                if metric_class:
+                    monitor.register_metric(metric_class())
+                else:
+                    st.warning(f"未找到指定的监控指标类型: {metric_type}")
+
             self.monitors[server_id] = monitor
 
     def stop_monitoring(self):

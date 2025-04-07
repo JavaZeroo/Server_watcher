@@ -5,8 +5,13 @@ servers:
   password: null
   port: 22
   username: root
+  metrics:
+    - type: CpuMetric
+    - type: MemoryMetric
 - hostname: 192.168.89.35
   id: web-server-2
   password: null
   port: 22
   username: root
+  metrics:
+    - type: DiskMetric
