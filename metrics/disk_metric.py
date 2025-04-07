@@ -18,3 +18,15 @@ class DiskMetric(Metric):
             except:
                 return None
         return None
+        
+    async def get_value_async(self, monitor):
+        disk_cmd = "df -h / | grep -v Filesystem | awk '{print $5}'"
+        disk_usage = await monitor.execute_command_async(disk_cmd)
+        
+        if disk_usage:
+            try:
+                percentage = float(disk_usage.strip().replace('%', ''))
+                return {"usage": percentage}
+            except:
+                return None
+        return None

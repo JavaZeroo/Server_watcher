@@ -1,10 +1,12 @@
 # monitor.py
 import paramiko
+import asyncio
 import time
 from datetime import datetime
 import multiprocessing
 import os
 from watcher_register import WatcherRegister, WatcherModuleType
+import asyncssh
 
 class ServerMonitor:
     def __init__(self, server_id, hostname, username, password=None, key_filename=None, port=22):
@@ -15,13 +17,41 @@ class ServerMonitor:
         self.key_filename = key_filename
         self.port = port
         self.client = None
+        self.conn = None  # asyncssh connection
         self.connected = False
         self.metrics = []
 
     def register_metric(self, metric):
         self.metrics.append(metric)
 
+    async def connect_async(self):
+        try:
+            # Use asyncssh for async connections
+            if self.key_filename:
+                self.conn = await asyncssh.connect(
+                    host=self.hostname,
+                    username=self.username,
+                    client_keys=[self.key_filename],
+                    port=self.port,
+                    known_hosts=None
+                )
+            else:
+                self.conn = await asyncssh.connect(
+                    host=self.hostname,
+                    username=self.username,
+                    password=self.password,
+                    port=self.port,
+                    known_hosts=None
+                )
+            self.connected = True
+            return True
+        except Exception as e:
+            print(f"异步连接 {self.hostname} 失败: {e}")
+            self.connected = False
+            return False
+
     def connect(self):
+        """Legacy synchronous connect method for backward compatibility"""
         try:
             self.client = paramiko.SSHClient()
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -46,10 +76,35 @@ class ServerMonitor:
             self.connected = False
             return False
     
+    async def disconnect_async(self):
+        if self.conn:
+            self.conn.close()
+            await self.conn.wait_closed()
+            self.connected = False
+    
     def disconnect(self):
         if self.client:
             self.client.close()
             self.connected = False
+        # Also close asyncssh connection if exists
+        if self.conn:
+            self.conn.close()
+            self.connected = False
+    
+    async def execute_command_async(self, command):
+        if not self.connected:
+            if not await self.connect_async():
+                return None
+        try:
+            result = await self.conn.run(command, timeout=10)
+            if result.stderr:
+                print(f"命令执行错误 ({self.hostname}): {result.stderr}")
+                return None
+            return result.stdout
+        except Exception as e:
+            print(f"异步命令执行失败 ({self.hostname}): {e}")
+            self.connected = False
+            return None
     
     def execute_command(self, command):
         if not self.connected:
@@ -68,6 +123,21 @@ class ServerMonitor:
             self.connected = False
             return None
     
+    async def get_metrics_data_async(self):
+        data = {}
+        for metric in self.metrics:
+            # Check if the metric has an async version
+            if hasattr(metric, 'get_value_async'):
+                value = await metric.get_value_async(self)
+            else:
+                # Fall back to synchronous method
+                value = metric.get_value(self)
+            
+            if value is not None:
+                for sub_key, sub_value in value.items():
+                    data[f"{metric.name}_{sub_key}"] = sub_value
+        return data
+    
     def get_metrics_data(self):
         data = {}
         for metric in self.metrics:
@@ -84,9 +154,9 @@ class ServerMonitor:
                 labels[f"{metric.name}_{key}"] = label
         return labels
 
-def monitor_server(server_config, interval, data_queue):
+async def async_monitor_server(server_config, interval, data_queue):
     server_id = server_config.get('id', server_config['hostname'])
-    print(f"进程 {server_id} 启动，PID: {os.getpid()}")
+    print(f"异步进程 {server_id} 启动，PID: {os.getpid()}")
     monitor = ServerMonitor(
         server_id=server_id,
         hostname=server_config['hostname'],
@@ -105,14 +175,14 @@ def monitor_server(server_config, interval, data_queue):
         else:
             print(f"未找到指定的监控指标类型: {metric_type}")
 
-    if not monitor.connect():
+    if not await monitor.connect_async():
         data_queue.put({"server_id": server_id, "status": "error", "message": "连接失败"})
         return
     data_queue.put({"server_id": server_id, "status": "connected"})
     try:
         while True:
             timestamp = datetime.now()
-            metrics_data = monitor.get_metrics_data()
+            metrics_data = await monitor.get_metrics_data_async()
             if metrics_data:
                 data = {
                     "server_id": server_id,
@@ -123,9 +193,17 @@ def monitor_server(server_config, interval, data_queue):
                 data_queue.put(data)
             else:
                 data_queue.put({"server_id": server_id, "status": "error", "message": "获取数据失败"})
-                monitor.connect()
-            time.sleep(interval)
+                await monitor.connect_async()
+            await asyncio.sleep(interval)
     except Exception as e:
         data_queue.put({"server_id": server_id, "status": "error", "message": str(e)})
     finally:
-        monitor.disconnect()
+        await monitor.disconnect_async()
+
+def monitor_server(server_config, interval, data_queue):
+    """Legacy synchronous monitor_server function that wraps the async version"""
+    server_id = server_config.get('id', server_config['hostname'])
+    print(f"进程 {server_id} 启动，PID: {os.getpid()}")
+    
+    # Use asyncio to run the async monitor function
+    asyncio.run(async_monitor_server(server_config, interval, data_queue))

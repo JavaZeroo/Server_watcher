@@ -15,3 +15,12 @@ class CpuMetric(Metric):
             except:
                 return None
         return None
+        
+    async def get_value_async(self, monitor):
+        result = await monitor.execute_command_async("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'")
+        if result:
+            try:
+                return {"usage": float(result.strip())}
+            except:
+                return None
+        return None
