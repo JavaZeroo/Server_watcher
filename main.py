@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import yaml
 import os
-from monitor import monitor_server  # 从 monitor.py 导入监控函数
+from monitor import ServerMonitor, monitor_server, CpuMetric, MemoryMetric, DiskMetric
 
 class ServerManager:
     def __init__(self):
@@ -19,7 +19,8 @@ class ServerManager:
         self.server_data = {}
         self.monitoring = False
         self.interval = 5
-        self.last_data_time = None  # 记录最后一次收到数据的时间
+        self.last_data_time = None
+        self.monitors = {}
 
     def load_config(self, config_file):
         try:
@@ -50,7 +51,7 @@ class ServerManager:
             return
         self.monitoring = True
         self.server_data = {server_id: [] for server_id in (selected_servers or self.servers.keys())}
-        self.last_data_time = time.time()  # 初始化最后数据时间
+        self.last_data_time = time.time()
         servers_to_monitor = {k: v for k, v in self.servers.items() if k in (selected_servers or self.servers.keys())}
         for server_id, server_config in servers_to_monitor.items():
             process = multiprocessing.Process(
@@ -60,6 +61,18 @@ class ServerManager:
             process.daemon = True
             process.start()
             self.processes[server_id] = process
+            monitor = ServerMonitor(
+                server_id=server_id,
+                hostname=server_config['hostname'],
+                username=server_config['username'],
+                password=server_config.get('password'),
+                key_filename=server_config.get('key_filename'),
+                port=server_config.get('port', 22)
+            )
+            monitor.register_metric(CpuMetric())
+            monitor.register_metric(MemoryMetric())
+            monitor.register_metric(DiskMetric())
+            self.monitors[server_id] = monitor
 
     def stop_monitoring(self):
         if not self.monitoring:
@@ -81,13 +94,18 @@ class ServerManager:
                     continue
                 if data.get("status") == "data":
                     self.server_data[server_id].append(data)
-                    self.last_data_time = time.time()  # 更新最后数据时间
+                    self.last_data_time = time.time()
                     if len(self.server_data[server_id]) > 100:
                         self.server_data[server_id] = self.server_data[server_id][-100:]
                 elif data.get("status") == "error":
                     st.error(f"服务器 {server_id} 错误: {data.get('message', '未知错误')}")
             except queue.Empty:
                 break
+
+    def get_metric_labels(self, server_id):
+        if server_id in self.monitors:
+            return self.monitors[server_id].get_metric_labels()
+        return {}
 
 def create_sample_config():
     config_path = os.path.join('config', 'servers.yaml')
@@ -114,7 +132,21 @@ def render_combined_metrics(server_manager, chart_placeholder):
                 st.info("正在等待服务器数据...")
             return
 
-        fig = make_subplots(rows=3, cols=1, subplot_titles=("CPU 使用率 (%)", "内存使用率 (%)", "磁盘使用率 (%)"), shared_xaxes=True, vertical_spacing=0.1)
+        # 动态获取所有指标（使用列表而不是集合）
+        all_metrics = []
+        for data_list in server_manager.server_data.values():
+            for data in data_list:
+                metrics = [k for k in data.keys() if k not in ["server_id", "status", "timestamp"]]
+                for metric in metrics:
+                    if metric not in all_metrics:
+                        all_metrics.append(metric)
+        
+        # 创建子图，基于指标数量动态调整
+        fig = make_subplots(rows=len(all_metrics), cols=1, 
+                            subplot_titles=[server_manager.get_metric_labels(server_id).get(metric, metric) 
+                                            for server_id in server_manager.server_data.keys() 
+                                            for metric in all_metrics][:len(all_metrics)], 
+                            shared_xaxes=True, vertical_spacing=0.1)
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
 
         for idx, (server_id, data) in enumerate(server_manager.server_data.items()):
@@ -122,20 +154,22 @@ def render_combined_metrics(server_manager, chart_placeholder):
                 continue
             df = pd.DataFrame(data)
             color = colors[idx % len(colors)]
-            for row, metric, name in [(1, 'cpu', 'CPU'), (2, 'memory', '内存'), (3, 'disk', '磁盘')]:
+            labels = server_manager.get_metric_labels(server_id)
+            for row, metric in enumerate(all_metrics, 1):
                 if metric in df.columns and not df[metric].isna().all():
                     fig.add_trace(
-                        go.Scatter(x=df['timestamp'], y=df[metric], mode='lines+markers', name=f"{server_id} {name}",
+                        go.Scatter(x=df['timestamp'], y=df[metric], mode='lines+markers', 
+                                   name=f"{server_id} {labels.get(metric, metric)}",
                                    line=dict(color=color, width=2), fill='tozeroy', legendgroup=server_id),
                         row=row, col=1
                     )
 
-        fig.update_layout(height=900, title_text="所有服务器资源使用率", showlegend=True,
+        fig.update_layout(height=300 * len(all_metrics), title_text="所有服务器资源使用率", showlegend=True,
                           legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        fig.update_yaxes(range=[0, 100], row=1, col=1)
-        fig.update_yaxes(range=[0, 100], row=2, col=1)
-        fig.update_yaxes(range=[0, 100], row=3, col=1)
-        fig.update_xaxes(title_text="时间", row=3, col=1)
+        for i in range(1, len(all_metrics) + 1):
+            fig.update_yaxes(range=[0, 100] if "percentage" in all_metrics[i-1] or "usage" in all_metrics[i-1] else None, 
+                             row=i, col=1)
+        fig.update_xaxes(title_text="时间", row=len(all_metrics), col=1)
         st.plotly_chart(fig, use_container_width=True)
 
 def show_latest_metrics(server_manager, metrics_placeholder):
@@ -149,19 +183,23 @@ def show_latest_metrics(server_manager, metrics_placeholder):
             latest = df.iloc[-1]
             hostname = server_manager.servers[server_id]['hostname']
             st.markdown(f"### {server_id} ({hostname})")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(label="当前CPU使用率", value=f"{latest['cpu']:.2f}%",
-                          delta=f"{latest['cpu'] - df.iloc[-2]['cpu']:.2f}%" if len(df) > 1 else None)
-            with col2:
-                st.metric(label="当前内存使用率", value=f"{latest['memory']:.2f}%",
-                          delta=f"{latest['memory'] - df.iloc[-2]['memory']:.2f}%" if len(df) > 1 else None)
-                if 'memory_used' in latest and 'memory_total' in latest:
+            
+            labels = server_manager.get_metric_labels(server_id)
+            metric_keys = [key for key in latest.index if key not in ["server_id", "status", "timestamp"]]
+            cols = st.columns(min(len(metric_keys), 3))
+            
+            for idx, key in enumerate(metric_keys):
+                label = labels.get(key, key)
+                value = latest[key]
+                if pd.isna(value):
+                    continue
+                with cols[idx % 3]:
+                    unit = "MB" if "memory" in key and key != "memory_percentage" else "%"
+                    st.metric(label=label, value=f"{value:.2f}{unit}")
+            
+            if 'memory_used' in latest and 'memory_total' in latest:
+                with cols[1]:
                     st.text(f"已用内存: {latest['memory_used']:.0f}MB / {latest['memory_total']:.0f}MB")
-            with col3:
-                if 'disk' in latest and not pd.isna(latest['disk']):
-                    st.metric(label="当前磁盘使用率", value=f"{latest['disk']:.2f}%",
-                              delta=f"{latest['disk'] - df.iloc[-2]['disk']:.2f}%" if len(df) > 1 and 'disk' in df.iloc[-2] else None)
 
 def main():
     st.set_page_config(page_title="多服务器监控系统", page_icon="🖥️", layout="wide")
@@ -199,7 +237,6 @@ def main():
         server_manager.stop_monitoring()
         st.warning("监控已停止")
 
-    # 创建占位符
     chart_placeholder = st.empty()
     metrics_placeholder = st.empty()
 
@@ -212,7 +249,7 @@ def main():
             st.warning("未选择任何服务器，请在侧边栏选择要监控的服务器")
         else:
             st.info("监控未启动，请点击'开始监控'按钮")
-        time.sleep(1)  # 每秒更新一次
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
