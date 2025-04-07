@@ -1,10 +1,6 @@
-# monitor.py
-import paramiko
 import asyncio
-import time
 import logging
 from datetime import datetime
-import multiprocessing
 import os
 from watcher_register import WatcherRegister, WatcherModuleType
 import asyncssh
@@ -55,32 +51,6 @@ class ServerMonitor:
             return True
         except Exception as e:
             logger.error(f"异步连接 {self.hostname} 失败: {e}")
-            self.connected = False
-            return False
-
-    def connect(self):
-        """Legacy synchronous connect method for backward compatibility"""
-        try:
-            self.client = paramiko.SSHClient()
-            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            if self.key_filename:
-                self.client.connect(
-                    hostname=self.hostname, 
-                    username=self.username, 
-                    key_filename=self.key_filename,
-                    port=self.port
-                )
-            else:
-                self.client.connect(
-                    hostname=self.hostname, 
-                    username=self.username, 
-                    password=self.password,
-                    port=self.port
-                )
-            self.connected = True
-            return True
-        except Exception as e:
-            logger.error(f"连接 {self.hostname} 失败: {e}")
             self.connected = False
             return False
     

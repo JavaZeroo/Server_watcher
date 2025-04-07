@@ -3,6 +3,7 @@
 本项目是一个基于 Streamlit 的多服务器资源监控仪表盘，支持实时监控多个服务器的 CPU、内存、磁盘等资源使用情况。
 
 ## 功能
+
 - 实时监控多个服务器的资源使用情况
 - 支持动态注册监控指标
 - 图表展示资源使用率
@@ -10,10 +11,10 @@
 
 ## 安装
 
-首先，安装所需的 Python 包：
+项目根目录下提供了 requirements.txt 文件，可以一键安装所有依赖：
 
 ```bash
-pip install streamlit paramiko pandas plotly pyyaml
+pip install -r requirements.txt
 ```
 
 ## 使用
