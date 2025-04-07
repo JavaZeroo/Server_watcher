@@ -1,0 +1,12 @@
+interval: 3
+servers:
+- hostname: 192.168.89.35
+  id: web-server-1
+  password: null
+  port: 22
+  username: root
+- hostname: 192.168.89.35
+  id: web-server-2
+  password: null
+  port: 22
+  username: root
