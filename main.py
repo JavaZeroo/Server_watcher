@@ -8,10 +8,11 @@ from plotly.subplots import make_subplots
 import yaml
 import os
 import logging
-import codecs
 from logging.handlers import RotatingFileHandler
 from monitor import ServerMonitor, monitor_server
 from watcher_register import WatcherRegister, WatcherModuleType
+
+import metrics
 
 # Configure logging with UTF-8 support
 log_file = 'monitor.log'
@@ -30,7 +31,6 @@ root_logger.addHandler(handler)
 # 获取应用logger
 logger = logging.getLogger('server_watcher')
 
-import metrics
 class ServerManager:
     def __init__(self):
         self.servers = {}
@@ -105,7 +105,7 @@ class ServerManager:
     def stop_monitoring(self):
         if not self.monitoring:
             return
-        for server_id, process in self.processes.items():
+        for _, process in self.processes.items():
             if process.is_alive():
                 process.terminate()
                 process.join(timeout=2)
