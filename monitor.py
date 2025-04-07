@@ -2,11 +2,19 @@
 import paramiko
 import asyncio
 import time
+import logging
 from datetime import datetime
 import multiprocessing
 import os
 from watcher_register import WatcherRegister, WatcherModuleType
 import asyncssh
+
+# 获取应用logger
+logger = logging.getLogger('server_watcher.monitor')
+
+# 配置asyncssh日志级别 - 减少不必要的详细日志
+asyncssh_logger = logging.getLogger('asyncssh')
+asyncssh_logger.setLevel(logging.WARNING)  # 只显示警告和错误信息
 
 class ServerMonitor:
     def __init__(self, server_id, hostname, username, password=None, key_filename=None, port=22):
@@ -46,7 +54,7 @@ class ServerMonitor:
             self.connected = True
             return True
         except Exception as e:
-            print(f"异步连接 {self.hostname} 失败: {e}")
+            logger.error(f"异步连接 {self.hostname} 失败: {e}")
             self.connected = False
             return False
 
@@ -72,7 +80,7 @@ class ServerMonitor:
             self.connected = True
             return True
         except Exception as e:
-            print(f"连接 {self.hostname} 失败: {e}")
+            logger.error(f"连接 {self.hostname} 失败: {e}")
             self.connected = False
             return False
     
@@ -98,11 +106,11 @@ class ServerMonitor:
         try:
             result = await self.conn.run(command, timeout=10)
             if result.stderr:
-                print(f"命令执行错误 ({self.hostname}): {result.stderr}")
+                logger.error(f"命令执行错误 ({self.hostname}): {result.stderr}")
                 return None
             return result.stdout
         except Exception as e:
-            print(f"异步命令执行失败 ({self.hostname}): {e}")
+            logger.error(f"异步命令执行失败 ({self.hostname}): {e}")
             self.connected = False
             return None
     
@@ -115,11 +123,11 @@ class ServerMonitor:
             result = stdout.read().decode('utf-8')
             error = stderr.read().decode('utf-8')
             if error:
-                print(f"命令执行错误 ({self.hostname}): {error}")
+                logger.error(f"命令执行错误 ({self.hostname}): {error}")
                 return None
             return result
         except Exception as e:
-            print(f"命令执行失败 ({self.hostname}): {e}")
+            logger.error(f"命令执行失败 ({self.hostname}): {e}")
             self.connected = False
             return None
     
@@ -156,7 +164,7 @@ class ServerMonitor:
 
 async def async_monitor_server(server_config, interval, data_queue):
     server_id = server_config.get('id', server_config['hostname'])
-    print(f"异步进程 {server_id} 启动，PID: {os.getpid()}")
+    logger.info(f"异步进程 {server_id} 启动，PID: {os.getpid()}")
     monitor = ServerMonitor(
         server_id=server_id,
         hostname=server_config['hostname'],
@@ -173,7 +181,7 @@ async def async_monitor_server(server_config, interval, data_queue):
         if metric_class:
             monitor.register_metric(metric_class())
         else:
-            print(f"未找到指定的监控指标类型: {metric_type}")
+            logger.warning(f"未找到指定的监控指标类型: {metric_type}")
 
     if not await monitor.connect_async():
         data_queue.put({"server_id": server_id, "status": "error", "message": "连接失败"})
@@ -196,6 +204,7 @@ async def async_monitor_server(server_config, interval, data_queue):
                 await monitor.connect_async()
             await asyncio.sleep(interval)
     except Exception as e:
+        logger.error(f"监控服务器 {server_id} 时出错: {e}")
         data_queue.put({"server_id": server_id, "status": "error", "message": str(e)})
     finally:
         await monitor.disconnect_async()
@@ -203,7 +212,7 @@ async def async_monitor_server(server_config, interval, data_queue):
 def monitor_server(server_config, interval, data_queue):
     """Legacy synchronous monitor_server function that wraps the async version"""
     server_id = server_config.get('id', server_config['hostname'])
-    print(f"进程 {server_id} 启动，PID: {os.getpid()}")
+    logger.info(f"进程 {server_id} 启动，PID: {os.getpid()}")
     
     # Use asyncio to run the async monitor function
     asyncio.run(async_monitor_server(server_config, interval, data_queue))

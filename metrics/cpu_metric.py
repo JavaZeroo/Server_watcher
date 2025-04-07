@@ -1,5 +1,9 @@
 from watcher_register import WatcherRegister, WatcherModuleType
+import logging
 from .base import Metric
+
+# 获取logger
+logger = logging.getLogger('server_watcher.metrics.cpu')
 
 @WatcherRegister.register(WatcherModuleType.METRIC)
 class CpuMetric(Metric):
@@ -12,7 +16,8 @@ class CpuMetric(Metric):
         if result:
             try:
                 return {"usage": float(result.strip())}
-            except:
+            except Exception as e:
+                logger.error(f"解析CPU使用率失败: {e}")
                 return None
         return None
         
@@ -21,6 +26,7 @@ class CpuMetric(Metric):
         if result:
             try:
                 return {"usage": float(result.strip())}
-            except:
+            except Exception as e:
+                logger.error(f"异步解析CPU使用率失败: {e}")
                 return None
         return None

@@ -7,8 +7,28 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import yaml
 import os
+import logging
+import codecs
+from logging.handlers import RotatingFileHandler
 from monitor import ServerMonitor, monitor_server
 from watcher_register import WatcherRegister, WatcherModuleType
+
+# Configure logging with UTF-8 support
+log_file = 'monitor.log'
+# 使用RotatingFileHandler并指定UTF-8编码
+handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, 
+                             backupCount=5, encoding='utf-8')
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                             datefmt='%Y-%m-%d %H:%M:%S')
+handler.setFormatter(formatter)
+
+# 配置根logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.addHandler(handler)
+
+# 获取应用logger
+logger = logging.getLogger('server_watcher')
 
 import metrics
 class ServerManager:

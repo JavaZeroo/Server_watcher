@@ -1,5 +1,9 @@
 from watcher_register import WatcherRegister, WatcherModuleType
+import logging
 from .base import Metric
+
+# Get the logger
+logger = logging.getLogger('server_watcher.metrics.memory')
 
 @WatcherRegister.register(WatcherModuleType.METRIC)
 class MemoryMetric(Metric):
@@ -28,7 +32,8 @@ class MemoryMetric(Metric):
                     "used": used,
                     "total": total
                 }
-            except:
+            except Exception as e:
+                logger.error(f"解析内存数据失败: {e}")
                 return None
         return None
         
@@ -36,12 +41,8 @@ class MemoryMetric(Metric):
         total_cmd = "free -m | grep 'Mem:' | awk '{print $2}'"
         used_cmd = "free -m | grep 'Mem:' | awk '{print $3}'"
         
-        # Execute commands in parallel for better performance
-        total_mem_task = monitor.execute_command_async(total_cmd)
-        used_mem_task = monitor.execute_command_async(used_cmd)
-        
-        total_mem = await total_mem_task
-        used_mem = await used_mem_task
+        total_mem = await monitor.execute_command_async(total_cmd)
+        used_mem = await monitor.execute_command_async(used_cmd)
         
         if total_mem and used_mem:
             try:
@@ -53,6 +54,7 @@ class MemoryMetric(Metric):
                     "used": used,
                     "total": total
                 }
-            except:
+            except Exception as e:
+                logger.error(f"异步解析内存数据失败: {e}")
                 return None
         return None
